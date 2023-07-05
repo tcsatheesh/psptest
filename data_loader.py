@@ -232,11 +232,7 @@ class LoadDataSet(Sparker):
         return input_data_schema
 
     def process_batch(self, bdf, batch_id):
-        bdf.persist()
-        self.logger.info(
-            "start processing batch",
-            extra=self.logger_extra,
-        )
+        bdf.persist()        
         _overall_start_time = _save_start_time = datetime.utcnow()
         bdf.write.format("delta").partitionBy(self.partitionby).mode("append").save(
             f"{self.output_file_path}"
