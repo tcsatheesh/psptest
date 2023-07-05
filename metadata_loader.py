@@ -1,4 +1,4 @@
-import os
+import json
 import sys
 import argparse
 import logging
@@ -6,18 +6,21 @@ from datetime import datetime
 import pyspark.sql.functions as F
 from pyspark.sql.window import Window
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType
-from pyspark.sql.functions import input_file_name, current_timestamp
-import concurrent.futures
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    TimestampType,
+)
+from azure.identity import ClientSecretCredential
+from azure.storage.blob import BlobClient, ContainerClient
 
 THREAD_POOL_ID_NAME = "threadPoolId"
-FIRST_TIMESTAMP_COLUMN_NAME = "firstTimeStamp"
 INPUT_FILE_COLUMN_NAME = "source_file"
 CURRENT_PROCESSING_TIME_COLUMN_NAME = "processing_time"
 
-LOGGING_FORMAT = (
-    f"%(asctime)s - %(name)s - %(levelname)s - %({THREAD_POOL_ID_NAME})s - %(message)s"
-)
+LOGGING_FORMAT = f"%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 
 class CustomLogger:
@@ -48,7 +51,7 @@ class Sparker:
         key_vault_linked_service_name,
     ):
         self.logger = logger
-        self.logger_extra = logger_extra        
+        self.logger_extra = logger_extra
         self.logger.info(f"Spark appName is {app_name}", extra=self.logger_extra)
         self.spark = SparkSession.builder.appName(
             app_name,
@@ -83,15 +86,14 @@ class Sparker:
         )
 
 
-
-class ClearFolders(Sparker): # for debugging and performance testing only
+class ClearFolders(Sparker):  # for debugging and performance testing only
     def __init__(
-            self,
-            args,
-            logger,
-            logger_extra,
-            key_vault_name,
-            key_vault_linked_service_name,            
+        self,
+        args,
+        logger,
+        logger_extra,
+        key_vault_name,
+        key_vault_linked_service_name,
     ):
         super().__init__(
             app_name="ClearFolders",
@@ -100,49 +102,110 @@ class ClearFolders(Sparker): # for debugging and performance testing only
             key_vault_name=key_vault_name,
             key_vault_linked_service_name=key_vault_linked_service_name,
         )
-        self.args = args 
-        
+        self.args = args
+
     def clear_folder(
         self,
         folder_path,
-        ):
-            from notebookutils import mssparkutils
+    ):
+        from notebookutils import mssparkutils
 
-            for _file_info in mssparkutils.fs.ls(folder_path):
-                mssparkutils.fs.rm(_file_info.path, recurse=True)
-
+        for _file_info in mssparkutils.fs.ls(folder_path):
+            mssparkutils.fs.rm(_file_info.path, recurse=True)
 
     def clear_folders(
-            self,
-            input_path,
+        self,
     ):
         args = self.args
         logger = self.logger
         storage_account_name = self.get_secret("storage-account-name")
         container_name = self.get_secret("container-name")
         output_path = args.output_path
-        input_path = input_path
-        checkpoint_path = f"{args.checkpoint_path}/{input_path}"
+        checkpoint_path = args.checkpoint_path
 
         container_path = (
             f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net"
         )
-        input_file_path = f"{container_path}/{input_path}"
         output_file_path = f"{container_path}/{output_path}"
         checkpoint_file_path = f"{container_path}/{checkpoint_path}"
-        
-        if self.args.clear_input:
-            logger.info(f"Clearing input folder {input_file_path}", extra=self.logger_extra)
-            self.clear_folder(input_file_path)
+
         if self.args.clear_output:
-            logger.info(f"Clearing output folder {output_file_path}", extra=self.logger_extra)
+            logger.info(
+                f"Clearing output folder {output_file_path}", extra=self.logger_extra
+            )
             self.clear_folder(output_file_path)
         if self.args.clear_checkpoint:
-            logger.info(f"Clearing checkpoint folder {checkpoint_file_path}", extra=self.logger_extra)
+            logger.info(
+                f"Clearing checkpoint folder {checkpoint_file_path}",
+                extra=self.logger_extra,
+            )
             self.clear_folder(checkpoint_file_path)
 
 
-class LoadDataSet(Sparker):
+class StorageHandler(Sparker):
+    def __init__(
+        self,
+        storage_account_name,
+        container_name,
+        tenant_id,
+        client_id,
+        client_secret,
+    ):
+        self.storage_account_name = storage_account_name
+        self.container_name = container_name
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+    def get_blob_client(
+        self,
+        file_name,
+    ):
+        storage_account_name = self.storage_account_name
+        container_name = self.container_name
+        credential = ClientSecretCredential(
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
+        _file_url = file_name.replace(
+            "abfss",
+            "https",
+        )
+        _file_url = _file_url.replace(
+            f"{container_name}@{storage_account_name}.dfs.core.windows.net",
+            f"{storage_account_name}.blob.core.windows.net/{container_name}",
+        )
+        print(f"file_url for blob client: {_file_url}")
+        blob_client = BlobClient.from_blob_url(
+            _file_url,
+            credential,
+        )
+        return blob_client
+
+    def get_file_properties(
+        self,
+        file_name,
+    ):
+        _start_time = datetime.utcnow()
+        try:
+            blob_client = self.get_blob_client(file_name)
+            blob_properties = blob_client.get_blob_properties()
+            return {
+                "size": f"{blob_properties.size}",
+                "last_modified": f"{blob_properties.last_modified.strftime('%Y-%m-%dT%H:%M:%S.%f')}",
+            }
+        except:
+            return {
+                "size": "not_found",
+                "last_modified": f"not_found",
+            }
+        finally:
+            _end_time = datetime.utcnow()
+            print(f"Time taken to get file properties: {_end_time - _start_time}")
+
+
+class LoadMetaDataSet(Sparker):
     def __init__(
         self,
         logger,
@@ -150,7 +213,6 @@ class LoadDataSet(Sparker):
         key_vault_name,
         key_vault_linked_service_name,
         args,
-        input_path,
     ):
         super().__init__(
             app_name=logger_extra[THREAD_POOL_ID_NAME],
@@ -163,24 +225,30 @@ class LoadDataSet(Sparker):
         logger_extra = logger_extra
         storage_account_name = self.get_secret("storage-account-name")
         container_name = self.get_secret("container-name")
-        eventhub_connection_string = self.get_secret("eventhub-connection-string")
+        input_eventhub_connection_string = self.get_secret(
+            "processed-eventhub-connection-string"
+        )
+        output_eventhub_connection_string = self.get_secret(
+            "archive-eventhub-connection-string"
+        )
         output_path = args.output_path
-        checkpoint_path = f"{args.checkpoint_path}/{input_path}"
+        checkpoint_path = args.checkpoint_path
         partitionby = args.partitionby
-        first_timestamp_column_name = args.first_timestamp_column_name
 
         self.partitionby = args.partitionby
         container_path = (
             f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net"
         )
-        self.input_file_path = f"{container_path}/{input_path}"
         self.output_file_path = f"{container_path}/{output_path}"
-        self.checkpoint_file_path_data = f"{container_path}/{checkpoint_path}"
-        self.first_timestamp_column_name = first_timestamp_column_name
-        self.input_data_schema = self.get_input_data_schema()
-        self.eh_conf = {
+        self.checkpoint_file_path = f"{container_path}/{checkpoint_path}"
+        self.input_eh_conf = {
             "eventhubs.connectionString": self.spark.sparkContext._jvm.org.apache.spark.eventhubs.EventHubsUtils.encrypt(
-                eventhub_connection_string,
+                input_eventhub_connection_string,
+            )
+        }
+        self.output_eh_conf = {
+            "eventhubs.connectionString": self.spark.sparkContext._jvm.org.apache.spark.eventhubs.EventHubsUtils.encrypt(
+                output_eventhub_connection_string,
             )
         }
 
@@ -193,127 +261,126 @@ class LoadDataSet(Sparker):
             extra=logger_extra,
         )
         logger.info(
-            f"Input path is {self.input_file_path}",
-            extra=logger_extra,
-        )
-        logger.info(
             f"Output path is {self.output_file_path}",
             extra=logger_extra,
         )
         logger.info(
-            f"Checkpoint path is {self.checkpoint_file_path_data}",
+            f"Checkpoint path is {self.checkpoint_file_path}",
             extra=logger_extra,
         )
         logger.info(
             f"Partition by is {partitionby}",
             extra=logger_extra,
         )
-        logger.info(
-            f"First timestamp column name is {first_timestamp_column_name}",
-            extra=logger_extra,
-        )
 
-    def get_input_data_schema(
+        self.storage_account_name = self.get_secret("storage-account-name")
+        self.container_name = self.get_secret("container-name")
+        self.tenant_id = self.get_secret("tenant-id")
+        self.client_id = self.get_secret("client-id")
+        self.client_secret = self.get_secret("client-secret")
+
+    def process_metadata_batch(
         self,
+        bdf,
+        batch_id,
     ):
-        input_data_schema = (
-            StructType()
-            .add("name", "string")
-            .add("age", "integer")
-            .add("first_time_buyer", "boolean")
-            .add("ltv", "float")
-            .add("loan_amount", "float")
-            .add("loan_term", "integer")
-            .add("interest_rate", "float")
-            .add("loan_purpose", "string")
-            .add("loan_type", "string")
-            .add("loan_id", "integer")
-        )
-        return input_data_schema
-
-    def process_batch(self, bdf, batch_id):
-        bdf.persist()        
+        bdf.persist()
         _overall_start_time = _save_start_time = datetime.utcnow()
-        bdf.write.format("delta").partitionBy(self.partitionby).mode("append").save(
-            f"{self.output_file_path}"
-        )
+        bdf.write.format("delta").mode("append").save(f"{self.output_file_path}")
         _save_end_time = datetime.utcnow()
 
         _start_time = datetime.utcnow()
-        _count_per_file = self.args.max_per_trigger
-        _count_per_file = bdf.groupBy(
-            [
-                INPUT_FILE_COLUMN_NAME,
-                THREAD_POOL_ID_NAME,
-                # FIRST_TIMESTAMP_COLUMN_NAME, # TODO: Add this back in
-            ]
-        ).count()
-
+        _count_per_file = bdf.groupBy("source_file").count()
         _count_per_file.withColumn(
             "body",
             F.to_json(
                 F.struct(*_count_per_file.columns), options={"ignoreNullFields": False}
             ),
-        ).select("body").write.format("eventhubs").options(**self.eh_conf).save()
-        _count_per_file = _count_per_file.count()
+        ).select("body").write.format("eventhubs").options(**self.output_eh_conf).save()
 
         _overall_end_time = _end_time = datetime.utcnow()
+        _logger_msg = f"NumberOfFiles: {_count_per_file.count()}"
+        _logger_msg += f" ,TimetoSave : {_save_end_time - _save_start_time}"
+        _logger_msg += f" ,TimetoSendEHMsg: {_end_time - _start_time}"
+        _logger_msg += f" ,TotalTime: {_overall_end_time - _overall_start_time}"
+        _logger_msg += f" ,Files/second: {_count_per_file.count()/(_overall_end_time - _overall_start_time).total_seconds()}"
+        self.logger.info(_logger_msg)
 
-        _log_str = f"NumberOfFiles: {_count_per_file}"
-        _log_str += f", TimetoSave : {_save_end_time - _save_start_time}"
-        _log_str += f", TimetoSendEHMsg: {_end_time - _start_time}"
-        _log_str += f", TotalTime: {_overall_end_time - _overall_start_time}"
-        _log_str += f", Files/second: {_count_per_file/(_overall_end_time - _overall_start_time).total_seconds()}"
-        self.logger.info(
-            _log_str,
-            extra=self.logger_extra,
-        )
-        bdf.unpersist()
-
-    def process_files(
+    def process_events(
         self,
-        max_files_per_trigger,
+        max_events_per_trigger,
         processing_time_in_seconds,
     ):
+        self.input_eh_conf["maxEventsPerTrigger"] = max_events_per_trigger
+        self.input_eh_conf["eventhubs.consumerGroup"] = self.args.consumer_group
+        self.input_eh_conf["eventhubs.prefetchCount"] = 500
+        self.input_eh_conf["eventhubs.threadPoolSize"] = 64
+
+        # Start from beginning of stream
+        startOffset = "-1"
+
+        # Create the positions
+        startingEventPosition = {
+            "offset": startOffset,
+            "seqNo": -1,  # not in use
+            "enqueuedTime": None,  # not in use
+            "isInclusive": True,
+        }
+        self.input_eh_conf["eventhubs.startingPosition"] = json.dumps(
+            startingEventPosition
+        )
+
         df = (
-            self.spark.readStream.option("header", "true")
-            .option("maxFilesPerTrigger", max_files_per_trigger)
-            .schema(self.input_data_schema)
-            .csv(self.input_file_path)
+            self.spark.readStream.format("eventhubs")
+            .options(**self.input_eh_conf)
+            .load()
         )
 
-        # Get the input file name and the processing time
-        transformed_df = df.select(
-            "*",
-            input_file_name().alias(INPUT_FILE_COLUMN_NAME),
-            current_timestamp().alias(CURRENT_PROCESSING_TIME_COLUMN_NAME),
+        transformed_df = df.withColumn("body", df["body"].cast("string"))
+
+        eventhub_schema = (
+            StructType().add("source_file", StringType()).add("count", IntegerType())
         )
 
-        # Add the thread pool id (Optional: useful for debugging)
-        transformed_df = transformed_df.withColumn(
-            THREAD_POOL_ID_NAME,
-            F.lit(self.logger_extra[THREAD_POOL_ID_NAME]),
+        transformed_df = transformed_df.select(
+            F.from_json(transformed_df["body"], eventhub_schema).alias("json")
+        )
+        transformed_df = transformed_df.select("json.*")
+
+        file_properties_schema = (
+            StructType().add("size", StringType()).add("last_modified", StringType())
         )
 
-        # TODO: Add the first timestamp from the timestamp column
-        # first_timestamp_column_name = self.first_timestamp_column_name
-        # w = Window.partitionBy(INPUT_FILE_COLUMN_NAME).orderBy(
-        #     first_timestamp_column_name
-        # )
-        # transformed_df = transformed_df.withColumn(
-        #     FIRST_TIMESTAMP_COLUMN_NAME, F.first(first_timestamp_column_name).over(w)
-        # )
+        _storage_handler = StorageHandler(
+            storage_account_name=self.storage_account_name,
+            container_name=self.container_name,
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
 
-        query = (
-            transformed_df.writeStream.option(
-                "checkpointLocation", self.checkpoint_file_path_data
+        filesize_udf = F.udf(
+            lambda file_name: _storage_handler.get_file_properties(file_name),
+            file_properties_schema,
+        )
+
+        _transformed_df = transformed_df.withColumn(
+            "fileproperties", filesize_udf(F.col("source_file"))
+        )
+        _transformed_df = _transformed_df.select(
+            F.col("source_file"), F.col("count"), F.col("fileproperties.*")
+        )
+
+        _query = (
+            _transformed_df.writeStream.option(
+                "checkpointLocation", self.checkpoint_file_path
             )
             .trigger(processingTime=f"{processing_time_in_seconds} seconds")
-            .foreachBatch(self.process_batch)
-            .queryName(f"process_data_{self.logger_extra[THREAD_POOL_ID_NAME]}")
+            .foreachBatch(self.process_metadata_batch)
+            .queryName("process_metadata")
             .start()
         )
-        return query
+        return _query
 
 
 class Main:
@@ -323,8 +390,6 @@ class Main:
         args = self.parse_arguments(sys.argv[1:])
 
         self.args = args
-        self.input_paths = args.input_paths.split(",")
-        self.max_workers = len(self.input_paths)
         self.logger_extra = {THREAD_POOL_ID_NAME: "Main"}
         custom_logger = CustomLogger(
             logger_name=args.logger_name,
@@ -338,10 +403,10 @@ class Main:
     ):
         parser = argparse.ArgumentParser(description="Process arguments.")
         parser.add_argument(
-            "--max-per-trigger",
+            "--max-events-per-trigger",
             type=int,
-            dest="max_per_trigger",
-            help="Max files per trigger",
+            dest="max_events_per_trigger",
+            help="Max events per trigger",
             required=True,
         )
         parser.add_argument(
@@ -387,13 +452,6 @@ class Main:
             required=False,
         )
         parser.add_argument(
-            "--input-paths",
-            type=str,
-            dest="input_paths",
-            help="Comma separated input paths",
-            required=True,
-        )
-        parser.add_argument(
             "--output-path",
             type=str,
             dest="output_path",
@@ -431,94 +489,63 @@ class Main:
             required=True,
         )
         parser.add_argument(
-            "--first-timestamp-column-name",
+            "--consumer-group",
             type=str,
-            dest="first_timestamp_column_name",
-            help="First timestamp column name",
+            dest="consumer_group",
+            help="Consumer group for event hub",
             required=True,
         )
 
         return parser.parse_args(args)
 
-    def process_input_path(
+    def process_metadata(
         self,
-        input_path,
     ):
         logger = self.logger
         args = self.args
-        # Note here we are using the index to create a unique thread pool id
-        # This will help us identify which thread is processing which input path
-        _logger_extra = {THREAD_POOL_ID_NAME: f"{input_path}"}
 
-        logger.info(f"Start processing input path: {input_path}", extra=_logger_extra)
-
-        data_loader = LoadDataSet(
+        metadata_loader = LoadMetaDataSet(
             logger=logger,
-            logger_extra=_logger_extra,
+            logger_extra=self.logger_extra,
             key_vault_name=args.keyvault_name,
             key_vault_linked_service_name=args.keyvault_linked_service_name,
             args=args,
-            input_path=input_path,
         )
 
         logger.info(
-            "Starting Data Ingestion",
-            extra=_logger_extra,
+            "Starting Metadata Processing",
         )
 
         logger.info(
-            f"Max files per trigger is {args.max_per_trigger}",
-            extra=_logger_extra,
+            f"Max events per trigger is {args.max_events_per_trigger}",
         )
         logger.info(
             f"Processing time is {args.processing_time_in_seconds} seconds",
-            extra=_logger_extra,
         )
 
-        process_data_query = data_loader.process_files(
-            max_files_per_trigger=args.max_per_trigger,
+        process_data_query = metadata_loader.process_events(
+            max_events_per_trigger=args.max_events_per_trigger,
             processing_time_in_seconds=args.processing_time_in_seconds,
         )
 
         process_data_query.awaitTermination()
 
     def _prepare_for_testing(
-            self,
+        self,
     ):
         args = self.args
-        if args.clear_input or args.clear_output or args.clear_checkpoint:
+        if args.clear_output or args.clear_checkpoint:
             _clear_folders = ClearFolders(
                 logger=self.logger,
                 logger_extra=self.logger_extra,
                 args=args,
                 key_vault_name=args.keyvault_name,
-                key_vault_linked_service_name=args.keyvault_linked_service_name,                
+                key_vault_linked_service_name=args.keyvault_linked_service_name,
             )
-            for input_path in self.input_paths:
-                _clear_folders.clear_folders(input_path)
+            _clear_folders.clear_folders()
 
     def run(self):
-        _logger = self.logger
-        _logger_extra = self.logger_extra
-        _max_workers = self.max_workers
-        _input_paths = self.input_paths
-
-        _logger.info(
-            f"Number of workers is {_max_workers}",
-            extra=_logger_extra,
-        )
-
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=_max_workers,
-        ) as executor:
-            the_futures = [
-                executor.submit(
-                    self.process_input_path,
-                    input_path,
-                )
-                for input_path in _input_paths
-            ]
-            concurrent.futures.wait(the_futures)
+        self.process_metadata()
 
 
 if __name__ == "__main__":

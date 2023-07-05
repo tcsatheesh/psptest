@@ -58,6 +58,7 @@ $arguments += " --output-path $output_path"
 $arguments += " --checkpoint-path $checkpoint_path"
 $arguments += " --partitionby $partitionby"
 $arguments += " --first-timestamp-column-name $first_timestamp_column_name"
+$arguments += " --clear-checkpoint"
 
 
 $name = "data_loader max_trigger:$max_per_trigger, processing_time:$processing_time_in_seconds seconds"
