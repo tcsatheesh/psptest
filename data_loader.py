@@ -137,8 +137,9 @@ class ClearFolders(Sparker): # for debugging and performance testing only
         if self.args.clear_output:
             logger.info(f"Clearing output folder {output_file_path}", extra=self.logger_extra)
             self.clear_folder(output_file_path)
-        logger.info(f"Clearing checkpoint folder {checkpoint_file_path}", extra=self.logger_extra)
-        self.clear_folder(checkpoint_file_path)
+        if self.args.clear_checkpoint:
+            logger.info(f"Clearing checkpoint folder {checkpoint_file_path}", extra=self.logger_extra)
+            self.clear_folder(checkpoint_file_path)
 
 
 class LoadDataSet(Sparker):
@@ -232,6 +233,10 @@ class LoadDataSet(Sparker):
 
     def process_batch(self, bdf, batch_id):
         bdf.persist()
+        self.logger.info(
+            "start processing batch",
+            extra=self.logger_extra,
+        )
         _overall_start_time = _save_start_time = datetime.utcnow()
         bdf.write.format("delta").partitionBy(self.partitionby).mode("append").save(
             f"{self.output_file_path}"
@@ -379,6 +384,13 @@ class Main:
             required=False,
         )
         parser.add_argument(
+            "--clear-checkpoint",
+            dest="clear_checkpoint",
+            action="store_true",
+            help="Clear checkpoint folder",
+            required=False,
+        )
+        parser.add_argument(
             "--input-paths",
             type=str,
             dest="input_paths",
@@ -478,15 +490,16 @@ class Main:
             self,
     ):
         args = self.args
-        _clear_folders = ClearFolders(
-            logger=self.logger,
-            logger_extra=self.logger_extra,
-            args=args,
-            key_vault_name=args.keyvault_name,
-            key_vault_linked_service_name=args.keyvault_linked_service_name,                
-        )
-        for input_path in self.input_paths:
-            _clear_folders.clear_folders(input_path)
+        if args.clear_input or args.clear_output or args.clear_checkpoint:
+            _clear_folders = ClearFolders(
+                logger=self.logger,
+                logger_extra=self.logger_extra,
+                args=args,
+                key_vault_name=args.keyvault_name,
+                key_vault_linked_service_name=args.keyvault_linked_service_name,                
+            )
+            for input_path in self.input_paths:
+                _clear_folders.clear_folders(input_path)
 
     def run(self):
         _logger = self.logger

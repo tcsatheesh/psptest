@@ -53,17 +53,18 @@ $arguments = "--max-per-trigger $max_per_trigger"
 $arguments += " --processing-time-in-seconds $processing_time_in_seconds"
 $arguments += " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
-$arguments += " --clear-output"
 $arguments += " --input-paths $input_paths"
 $arguments += " --output-path $output_path"
 $arguments += " --checkpoint-path $checkpoint_path"
 $arguments += " --partitionby $partitionby"
 $arguments += " --first-timestamp-column-name $first_timestamp_column_name"
 
+
 $name = "data_loader max_trigger:$max_per_trigger, processing_time:$processing_time_in_seconds seconds"
 
 Write-Host "Arguments: $arguments"
 Write-Host "Name of the job: $name"
+Write-Host "Spark pool: $spark_pool_name and executor size: $executor_size"
 
 $main_definition_file = "abfss://$container_name@$storage_account_name.dfs.core.windows.net/$blob_name"
 
