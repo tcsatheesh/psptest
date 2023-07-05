@@ -41,15 +41,15 @@ class CustomLogger:
 class Sparker:
     def __init__(
         self,
+        app_name,
         logger,
-        extra,
+        logger_extra,
         key_vault_name,
         key_vault_linked_service_name,
     ):
         self.logger = logger
-        self.extra = extra
-        app_name = extra[THREAD_POOL_ID_NAME]
-        self.logger.info(f"Spark appName is {app_name}", extra=self.extra)
+        self.logger_extra = logger_extra        
+        self.logger.info(f"Spark appName is {app_name}", extra=self.logger_extra)
         self.spark = SparkSession.builder.appName(
             app_name,
         ).getOrCreate()
@@ -61,12 +61,12 @@ class Sparker:
 
         self.logger.info(
             f"Spark version: {self.spark.version}",
-            extra=self.extra,
+            extra=self.logger_extra,
         )
 
         self.logger.info(
             "Spark initialized",
-            extra=self.extra,
+            extra=self.logger_extra,
         )
 
     def get_spark(self):
@@ -83,23 +83,83 @@ class Sparker:
         )
 
 
+
+class ClearFolders(Sparker): # for debugging and performance testing only
+    def __init__(
+            self,
+            args,
+            logger,
+            logger_extra,
+            key_vault_name,
+            key_vault_linked_service_name,            
+    ):
+        super().__init__(
+            app_name="ClearFolders",
+            logger=logger,
+            logger_extra=logger_extra,
+            key_vault_name=key_vault_name,
+            key_vault_linked_service_name=key_vault_linked_service_name,
+        )
+        self.args = args 
+        
+    def clear_folder(
+        self,
+        folder_path,
+        ):
+            from notebookutils import mssparkutils
+
+            for _file_info in mssparkutils.fs.ls(folder_path):
+                mssparkutils.fs.rm(_file_info.path, recurse=True)
+
+
+    def clear_folders(
+            self,
+            input_path,
+    ):
+        args = self.args
+        logger = self.logger
+        storage_account_name = self.get_secret("storage-account-name")
+        container_name = self.get_secret("container-name")
+        output_path = args.output_path
+        input_path = input_path
+        checkpoint_path = f"{args.checkpoint_path}/{input_path}"
+
+        container_path = (
+            f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net"
+        )
+        input_file_path = f"{container_path}/{input_path}"
+        output_file_path = f"{container_path}/{output_path}"
+        checkpoint_file_path = f"{container_path}/{checkpoint_path}"
+        
+        if self.args.clear_input:
+            logger.info(f"Clearing input folder {input_file_path}", extra=self.logger_extra)
+            self.clear_folder(input_file_path)
+        if self.args.clear_output:
+            logger.info(f"Clearing output folder {output_file_path}", extra=self.logger_extra)
+            self.clear_folder(output_file_path)
+        logger.info(f"Clearing checkpoint folder {checkpoint_file_path}", extra=self.logger_extra)
+        self.clear_folder(checkpoint_file_path)
+
+
 class LoadDataSet(Sparker):
     def __init__(
         self,
         logger,
-        extra,
+        logger_extra,
         key_vault_name,
         key_vault_linked_service_name,
         args,
         input_path,
     ):
         super().__init__(
+            app_name=logger_extra[THREAD_POOL_ID_NAME],
             logger=logger,
-            extra=extra,
+            logger_extra=logger_extra,
             key_vault_name=key_vault_name,
             key_vault_linked_service_name=key_vault_linked_service_name,
         )
-        _logging_extra = extra
+        self.args = args
+        logger_extra = logger_extra
         storage_account_name = self.get_secret("storage-account-name")
         container_name = self.get_secret("container-name")
         eventhub_connection_string = self.get_secret("eventhub-connection-string")
@@ -125,45 +185,32 @@ class LoadDataSet(Sparker):
 
         logger.info(
             f"Storage account name is {storage_account_name}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
         logger.info(
             f"Container name is {container_name}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
         logger.info(
             f"Input path is {self.input_file_path}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
         logger.info(
             f"Output path is {self.output_file_path}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
         logger.info(
             f"Checkpoint path is {self.checkpoint_file_path_data}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
         logger.info(
             f"Partition by is {partitionby}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
         logger.info(
             f"First timestamp column name is {first_timestamp_column_name}",
-            extra=_logging_extra,
+            extra=logger_extra,
         )
-
-    def clear_folders(
-        self,
-        clear_input=False,
-    ):
-        if clear_input:
-            clear_folder(
-                folder_path=self.input_file_path,
-            )
-        else:
-            clear_folder(
-                folder_path=self.checkpoint_file_path_data,
-            )
 
     def get_input_data_schema(
         self,
@@ -185,19 +232,14 @@ class LoadDataSet(Sparker):
 
     def process_batch(self, bdf, batch_id):
         bdf.persist()
-        _overall_start_time = _load_start_time = datetime.utcnow()
-
-        totalRecords = bdf.count()
-        bdf.cache()
-        _load_end_time = datetime.utcnow()
-
-        _save_start_time = datetime.utcnow()
+        _overall_start_time = _save_start_time = datetime.utcnow()
         bdf.write.format("delta").partitionBy(self.partitionby).mode("append").save(
             f"{self.output_file_path}"
         )
         _save_end_time = datetime.utcnow()
 
         _start_time = datetime.utcnow()
+        _count_per_file = self.args.max_per_trigger
         _count_per_file = bdf.groupBy(
             [
                 INPUT_FILE_COLUMN_NAME,
@@ -212,17 +254,18 @@ class LoadDataSet(Sparker):
                 F.struct(*_count_per_file.columns), options={"ignoreNullFields": False}
             ),
         ).select("body").write.format("eventhubs").options(**self.eh_conf).save()
+        _count_per_file = _count_per_file.count()
 
         _overall_end_time = _end_time = datetime.utcnow()
+
+        _log_str = f"NumberOfFiles: {_count_per_file}"
+        _log_str += f", TimetoSave : {_save_end_time - _save_start_time}"
+        _log_str += f", TimetoSendEHMsg: {_end_time - _start_time}"
+        _log_str += f", TotalTime: {_overall_end_time - _overall_start_time}"
+        _log_str += f", Files/second: {_count_per_file/(_overall_end_time - _overall_start_time).total_seconds()}"
         self.logger.info(
-            f"NumberOfFiles: {_count_per_file.count()}, \
-TotalRecords: {totalRecords}, \
-TimetoLoad: {_load_end_time - _load_start_time}, \
-TimetoSave : {_save_end_time - _save_start_time}, \
-TimetoSendEHMsg: {_end_time - _start_time}, \
-TotalTime: {_overall_end_time - _overall_start_time}, \
-Files/second: {_count_per_file.count()/(_overall_end_time - _overall_start_time).total_seconds()}",
-            extra=self.extra,
+            _log_str,
+            extra=self.logger_extra,
         )
         bdf.unpersist()
 
@@ -248,7 +291,7 @@ Files/second: {_count_per_file.count()/(_overall_end_time - _overall_start_time)
         # Add the thread pool id (Optional: useful for debugging)
         transformed_df = transformed_df.withColumn(
             THREAD_POOL_ID_NAME,
-            F.lit(self.extra[THREAD_POOL_ID_NAME]),
+            F.lit(self.logger_extra[THREAD_POOL_ID_NAME]),
         )
 
         # TODO: Add the first timestamp from the timestamp column
@@ -270,15 +313,6 @@ Files/second: {_count_per_file.count()/(_overall_end_time - _overall_start_time)
             .start()
         )
         return query
-
-
-def clear_folder(
-    folder_path,
-):
-    from notebookutils import mssparkutils
-
-    for _file_info in mssparkutils.fs.ls(folder_path):
-        mssparkutils.fs.rm(_file_info.path, recurse=True)
 
 
 class Main:
@@ -406,43 +440,31 @@ class Main:
         args = self.args
         # Note here we are using the index to create a unique thread pool id
         # This will help us identify which thread is processing which input path
-        _logging_extra = {THREAD_POOL_ID_NAME: f"{input_path}"}
+        _logger_extra = {THREAD_POOL_ID_NAME: f"{input_path}"}
+
+        logger.info(f"Start processing input path: {input_path}", extra=_logger_extra)
 
         data_loader = LoadDataSet(
             logger=logger,
-            extra=_logging_extra,
+            logger_extra=_logger_extra,
             key_vault_name=args.keyvault_name,
             key_vault_linked_service_name=args.keyvault_linked_service_name,
             args=args,
             input_path=input_path,
         )
 
-        if args.clear_input:
-            logger.info(
-                "Clearing input folder",
-                extra=_logging_extra,
-            )
-            data_loader.clear_folders(clear_input=True)
-
-        if args.clear_output:
-            logger.info(
-                "Clearing output folders",
-                extra=_logging_extra,
-            )
-            data_loader.clear_folders(clear_input=False)
-
         logger.info(
             "Starting Data Ingestion",
-            extra=_logging_extra,
+            extra=_logger_extra,
         )
 
         logger.info(
             f"Max files per trigger is {args.max_per_trigger}",
-            extra=_logging_extra,
+            extra=_logger_extra,
         )
         logger.info(
             f"Processing time is {args.processing_time_in_seconds} seconds",
-            extra=_logging_extra,
+            extra=_logger_extra,
         )
 
         process_data_query = data_loader.process_files(
@@ -452,8 +474,21 @@ class Main:
 
         process_data_query.awaitTermination()
 
-    def run(self):
+    def _prepare_for_testing(
+            self,
+    ):
         args = self.args
+        _clear_folders = ClearFolders(
+            logger=self.logger,
+            logger_extra=self.logger_extra,
+            args=args,
+            key_vault_name=args.keyvault_name,
+            key_vault_linked_service_name=args.keyvault_linked_service_name,                
+        )
+        for input_path in self.input_paths:
+            _clear_folders.clear_folders(input_path)
+
+    def run(self):
         _logger = self.logger
         _logger_extra = self.logger_extra
         _max_workers = self.max_workers
@@ -479,4 +514,5 @@ class Main:
 
 if __name__ == "__main__":
     _main = Main()
+    _main._prepare_for_testing()
     _main.run()
