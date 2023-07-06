@@ -48,7 +48,7 @@ class Sparker:
         key_vault_linked_service_name,
     ):
         self.logger = logger
-        self.logger_extra = logger_extra        
+        self.logger_extra = logger_extra
         self.logger.info(f"Spark appName is {app_name}", extra=self.logger_extra)
         self.spark = SparkSession.builder.appName(
             app_name,
@@ -83,15 +83,14 @@ class Sparker:
         )
 
 
-
-class ClearFolders(Sparker): # for debugging and performance testing only
+class ClearFolders(Sparker):  # for debugging and performance testing only
     def __init__(
-            self,
-            args,
-            logger,
-            logger_extra,
-            key_vault_name,
-            key_vault_linked_service_name,            
+        self,
+        args,
+        logger,
+        logger_extra,
+        key_vault_name,
+        key_vault_linked_service_name,
     ):
         super().__init__(
             app_name="ClearFolders",
@@ -100,21 +99,28 @@ class ClearFolders(Sparker): # for debugging and performance testing only
             key_vault_name=key_vault_name,
             key_vault_linked_service_name=key_vault_linked_service_name,
         )
-        self.args = args 
-        
+        self.args = args
+
     def clear_folder(
         self,
         folder_path,
-        ):
-            from notebookutils import mssparkutils
+    ):
+        from notebookutils import mssparkutils
 
+        try:
             for _file_info in mssparkutils.fs.ls(folder_path):
                 mssparkutils.fs.rm(_file_info.path, recurse=True)
-
+        except Exception as e:
+            self.logger.warning(
+                f"Error in deleting {folder_path}: {e}",
+                extra=self.logger_extra,
+            )
+        finally:
+            mssparkutils.fs.mkdirs(folder_path)
 
     def clear_folders(
-            self,
-            input_path,
+        self,
+        input_path,
     ):
         args = self.args
         logger = self.logger
@@ -130,15 +136,22 @@ class ClearFolders(Sparker): # for debugging and performance testing only
         input_file_path = f"{container_path}/{input_path}"
         output_file_path = f"{container_path}/{output_path}"
         checkpoint_file_path = f"{container_path}/{checkpoint_path}"
-        
+
         if self.args.clear_input:
-            logger.info(f"Clearing input folder {input_file_path}", extra=self.logger_extra)
+            logger.info(
+                f"Clearing input folder {input_file_path}", extra=self.logger_extra
+            )
             self.clear_folder(input_file_path)
         if self.args.clear_output:
-            logger.info(f"Clearing output folder {output_file_path}", extra=self.logger_extra)
+            logger.info(
+                f"Clearing output folder {output_file_path}", extra=self.logger_extra
+            )
             self.clear_folder(output_file_path)
         if self.args.clear_checkpoint:
-            logger.info(f"Clearing checkpoint folder {checkpoint_file_path}", extra=self.logger_extra)
+            logger.info(
+                f"Clearing checkpoint folder {checkpoint_file_path}",
+                extra=self.logger_extra,
+            )
             self.clear_folder(checkpoint_file_path)
 
 
@@ -232,7 +245,7 @@ class LoadDataSet(Sparker):
         return input_data_schema
 
     def process_batch(self, bdf, batch_id):
-        bdf.persist()        
+        bdf.persist()
         _overall_start_time = _save_start_time = datetime.utcnow()
         bdf.write.format("delta").partitionBy(self.partitionby).mode("append").save(
             f"{self.output_file_path}"
@@ -245,9 +258,13 @@ class LoadDataSet(Sparker):
             [
                 INPUT_FILE_COLUMN_NAME,
                 THREAD_POOL_ID_NAME,
-                # FIRST_TIMESTAMP_COLUMN_NAME, # TODO: Add this back in
             ]
-        ).count()
+        ).agg(
+            F.count("*").alias("count"),
+            F.min(F.col(self.first_timestamp_column_name)).alias(
+                FIRST_TIMESTAMP_COLUMN_NAME
+            ),
+        )
 
         _count_per_file.withColumn(
             "body",
@@ -294,15 +311,6 @@ class LoadDataSet(Sparker):
             THREAD_POOL_ID_NAME,
             F.lit(self.logger_extra[THREAD_POOL_ID_NAME]),
         )
-
-        # TODO: Add the first timestamp from the timestamp column
-        # first_timestamp_column_name = self.first_timestamp_column_name
-        # w = Window.partitionBy(INPUT_FILE_COLUMN_NAME).orderBy(
-        #     first_timestamp_column_name
-        # )
-        # transformed_df = transformed_df.withColumn(
-        #     FIRST_TIMESTAMP_COLUMN_NAME, F.first(first_timestamp_column_name).over(w)
-        # )
 
         query = (
             transformed_df.writeStream.option(
@@ -483,7 +491,7 @@ class Main:
         process_data_query.awaitTermination()
 
     def _prepare_for_testing(
-            self,
+        self,
     ):
         args = self.args
         if args.clear_input or args.clear_output or args.clear_checkpoint:
@@ -492,7 +500,7 @@ class Main:
                 logger_extra=self.logger_extra,
                 args=args,
                 key_vault_name=args.keyvault_name,
-                key_vault_linked_service_name=args.keyvault_linked_service_name,                
+                key_vault_linked_service_name=args.keyvault_linked_service_name,
             )
             for input_path in self.input_paths:
                 _clear_folders.clear_folders(input_path)
