@@ -7,7 +7,6 @@ import pyspark.sql.functions as F
 from pyspark.sql.window import Window
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType
-from pyspark.sql.functions import input_file_name, current_timestamp
 import concurrent.futures
 
 THREAD_POOL_ID_NAME = "threadPoolId"
@@ -302,8 +301,8 @@ class LoadDataSet(Sparker):
         # Get the input file name and the processing time
         transformed_df = df.select(
             "*",
-            input_file_name().alias(INPUT_FILE_COLUMN_NAME),
-            current_timestamp().alias(CURRENT_PROCESSING_TIME_COLUMN_NAME),
+            F.input_file_name().alias(INPUT_FILE_COLUMN_NAME),
+            F.current_timestamp().alias(CURRENT_PROCESSING_TIME_COLUMN_NAME),
         )
 
         # Add the thread pool id (Optional: useful for debugging)
