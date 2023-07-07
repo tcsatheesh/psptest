@@ -67,7 +67,7 @@ $arguments += " --csv-header-is-present"
 # $arguments += " --clear-output"
 
 
-$name = "data_loader max_trigger:$max_per_trigger, processing_time:$processing_time_in_seconds seconds"
+$name = "data_loader max_trigger:$max_files_per_trigger, processing_time:$processing_time_in_seconds seconds"
 
 Write-Host "Arguments: $arguments"
 Write-Host "Name of the job: $name"
