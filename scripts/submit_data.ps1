@@ -63,6 +63,7 @@ $arguments += " --checkpoint-path $checkpoint_path"
 $arguments += " --partitionby $partitionby"
 $arguments += " --first-timestamp-column-name $first_timestamp_column_name"
 $arguments += " --clear-checkpoint"
+$arguments += " --csv-header-is-present"
 # $arguments += " --clear-output"
 
 

@@ -281,6 +281,10 @@ class LoadDataSet(Sparker):
             f"Number of threads for cleanSource archive is {args.num_threads_for_cleanup}",
             extra=logger_extra,
         )
+        logger.info(
+            f"Is CSV header present? {args.csv_header_is_present}",
+            extra=logger_extra,
+        )
 
     def get_input_data_schema(
         self,
@@ -305,8 +309,14 @@ class LoadDataSet(Sparker):
         max_files_per_trigger,  # not used
         processing_time_in_seconds,
     ):
+        options = {
+            "header": self.args.csv_header_is_present,
+        }
+        if max_files_per_trigger > 0:
+            options["maxFilesPerTrigger"] = max_files_per_trigger
+
         df = (
-            self.spark.readStream.option("header", "true")
+            self.spark.readStream.options(**options)
             .schema(self.input_data_schema)
             .csv(self.input_file_path)
         )
@@ -330,8 +340,14 @@ class LoadDataSet(Sparker):
             )
             .option("cleanSource", "archive")
             .option("sourceArchiveDir", self.archive_file_path)
-            .option("spark.sql.streaming.fileSource.log.cleanupDelay", self.args.cleanup_delay)
-            .option("spark.sql.streaming.fileSource.cleaner.numThreads", self.args.num_threads_for_cleanup)
+            .option(
+                "spark.sql.streaming.fileSource.log.cleanupDelay",
+                self.args.cleanup_delay,
+            )
+            .option(
+                "spark.sql.streaming.fileSource.cleaner.numThreads",
+                self.args.num_threads_for_cleanup,
+            )
             .trigger(processingTime=f"{processing_time_in_seconds} seconds")
             .format("delta")
             .queryName(f"process_data_{self.logger_extra[THREAD_POOL_ID_NAME]}")
@@ -483,6 +499,13 @@ class Main:
             dest="num_threads_for_cleanup",
             help="Number of threads for cleanup",
             default=5,
+            required=False,
+        )
+        parser.add_argument(
+            "--csv-header-is-present",
+            dest="csv_header_is_present",
+            action="store_true",
+            help="Is csv header present",
             required=False,
         )
 
