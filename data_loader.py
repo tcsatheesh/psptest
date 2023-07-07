@@ -220,6 +220,7 @@ class LoadDataSet(Sparker):
         container_name = self.get_secret("container-name")
         eventhub_connection_string = self.get_secret("eventhub-connection-string")
         output_path = args.output_path
+        archive_path = args.archive_path
         checkpoint_path = f"{args.checkpoint_path}/{input_path}"
         partitionby = args.partitionby
         first_timestamp_column_name = args.first_timestamp_column_name
@@ -230,6 +231,7 @@ class LoadDataSet(Sparker):
         )
         self.input_file_path = f"{container_path}/{input_path}"
         self.output_file_path = f"{container_path}/{output_path}"
+        self.archive_file_path = f"{container_path}/{archive_path}"
         self.checkpoint_file_path_data = f"{container_path}/{checkpoint_path}"
         self.first_timestamp_column_name = first_timestamp_column_name
         self.input_data_schema = self.get_input_data_schema()
@@ -253,6 +255,10 @@ class LoadDataSet(Sparker):
         )
         logger.info(
             f"Output path is {self.output_file_path}",
+            extra=logger_extra,
+        )
+        logger.info(
+            f"Archive path is {self.archive_file_path}",
             extra=logger_extra,
         )
         logger.info(
@@ -288,12 +294,11 @@ class LoadDataSet(Sparker):
 
     def process_files(
         self,
-        max_files_per_trigger,
+        max_files_per_trigger, # not used
         processing_time_in_seconds,
     ):
         df = (
             self.spark.readStream.option("header", "true")
-            .option("maxFilesPerTrigger", max_files_per_trigger)
             .schema(self.input_data_schema)
             .csv(self.input_file_path)
         )
@@ -315,9 +320,14 @@ class LoadDataSet(Sparker):
             transformed_df.writeStream.option(
                 "checkpointLocation", self.checkpoint_file_path_data
             )
+            .option("cleanSource", "archive")
+            .option("sourceArchiveDir", self.archive_file_path)
+            .option("spark.sql.streaming.fileSource.log.cleanupDelay", 10)
+            .option("spark.sql.streaming.fileSource.cleaner.numThreads", 5)
             .trigger(processingTime=f"{processing_time_in_seconds} seconds")
             .format("delta")
             .queryName(f"process_data_{self.logger_extra[THREAD_POOL_ID_NAME]}")
+            .partitionBy(self.partitionby)
             .start(f"{self.output_file_path}")
         )
         return query
@@ -345,9 +355,9 @@ class Main:
     ):
         parser = argparse.ArgumentParser(description="Process arguments.")
         parser.add_argument(
-            "--max-per-trigger",
+            "--max-files-per-trigger",
             type=int,
-            dest="max_per_trigger",
+            dest="max_files_per_trigger",
             help="Max files per trigger",
             required=True,
         )
@@ -444,6 +454,13 @@ class Main:
             help="First timestamp column name",
             required=True,
         )
+        parser.add_argument(
+            "--archive-path",
+            type=str,
+            dest="archive_path",
+            help="Archive path",
+            required=True,
+        )
 
         return parser.parse_args(args)
 
@@ -474,7 +491,7 @@ class Main:
         )
 
         logger.info(
-            f"Max files per trigger is {args.max_per_trigger}",
+            f"Max files per trigger is {args.max_files_per_trigger}",
             extra=_logger_extra,
         )
         logger.info(
@@ -483,7 +500,7 @@ class Main:
         )
 
         process_data_query = data_loader.process_files(
-            max_files_per_trigger=args.max_per_trigger,
+            max_files_per_trigger=args.max_files_per_trigger,
             processing_time_in_seconds=args.processing_time_in_seconds,
         )
 

@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [int]$max_per_trigger = 10,
+    [int]$max_files_per_trigger = -1,
 
     [Parameter()]
     [int]$processing_time_in_seconds = 10,
@@ -44,21 +44,26 @@ param(
     [string]$output_path = "output",
 
     [Parameter()]
-    [string]$checkpoint_path = "checkpoint"
+    [string]$checkpoint_path = "checkpoint",
+    
+    [Parameter()]
+    [string]$archive_path = "archive"
 )
 
 
 
-$arguments = "--max-per-trigger $max_per_trigger"
+$arguments = "--max-files-per-trigger $max_files_per_trigger"
 $arguments += " --processing-time-in-seconds $processing_time_in_seconds"
 $arguments += " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
 $arguments += " --input-paths $input_paths"
 $arguments += " --output-path $output_path"
+$arguments += " --archive-path $archive_path"
 $arguments += " --checkpoint-path $checkpoint_path"
 $arguments += " --partitionby $partitionby"
 $arguments += " --first-timestamp-column-name $first_timestamp_column_name"
 $arguments += " --clear-checkpoint"
+# $arguments += " --clear-output"
 
 
 $name = "data_loader max_trigger:$max_per_trigger, processing_time:$processing_time_in_seconds seconds"
