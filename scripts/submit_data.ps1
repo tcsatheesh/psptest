@@ -70,7 +70,7 @@ $name = "data_loader max_trigger:$max_per_trigger, processing_time:$processing_t
 
 Write-Host "Arguments: $arguments"
 Write-Host "Name of the job: $name"
-Write-Host "Spark pool: $spark_pool_name and executor size: $executor_size"
+Write-Host "Spark pool: $spark_pool_name and executor size: $executor_size and number of executors: $number_of_executors"
 
 $main_definition_file = "abfss://$container_name@$storage_account_name.dfs.core.windows.net/$blob_name"
 
