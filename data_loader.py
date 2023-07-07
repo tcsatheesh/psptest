@@ -95,7 +95,7 @@ class Sparker:
             extra=self.logger_extra,
         )
         self.logger.info(
-            f"Spark default parallelism: {self.spark.sparkContext.defaultParallelism}",
+            f"Spark defaultParallelism: {self.spark.sparkContext.defaultParallelism}",
             extra=self.logger_extra,
         )
         self.logger.info(
@@ -294,7 +294,7 @@ class LoadDataSet(Sparker):
 
     def process_files(
         self,
-        max_files_per_trigger, # not used
+        max_files_per_trigger,  # not used
         processing_time_in_seconds,
     ):
         df = (
