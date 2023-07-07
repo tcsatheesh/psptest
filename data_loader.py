@@ -62,7 +62,50 @@ class Sparker:
             f"Spark version: {self.spark.version}",
             extra=self.logger_extra,
         )
-
+        self.logger.info(
+            f"Spark master: {self.spark.sparkContext.master}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark executor memory: {self.spark.sparkContext._conf.get('spark.executor.memory')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark executor cores: {self.spark.sparkContext._conf.get('spark.executor.cores')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark executor instances: {self.spark.sparkContext._conf.get('spark.executor.instances')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark driver memory: {self.spark.sparkContext._conf.get('spark.driver.memory')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark driver cores: {self.spark.sparkContext._conf.get('spark.driver.cores')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark driver maxResultSize: {self.spark.sparkContext._conf.get('spark.driver.maxResultSize')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark shuffle partitions: {self.spark.sparkContext._conf.get('spark.sql.shuffle.partitions')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark default parallelism: {self.spark.sparkContext.defaultParallelism}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark default parallelism: {self.spark.sparkContext._conf.get('spark.default.parallelism')}",
+            extra=self.logger_extra,
+        )
+        self.logger.info(
+            f"Spark default minPartitions: {self.spark.sparkContext.defaultMinPartitions}",
+            extra=self.logger_extra,
+        )
         self.logger.info(
             "Spark initialized",
             extra=self.logger_extra,
@@ -243,49 +286,6 @@ class LoadDataSet(Sparker):
         )
         return input_data_schema
 
-    def process_batch(self, bdf, batch_id):
-        bdf.persist()
-        _overall_start_time = _save_start_time = datetime.utcnow()
-        bdf.write.format("delta").partitionBy(self.partitionby).mode("append").save(
-            f"{self.output_file_path}"
-        )
-        _save_end_time = datetime.utcnow()
-
-        _start_time = datetime.utcnow()
-        _count_per_file = self.args.max_per_trigger
-        _count_per_file = bdf.groupBy(
-            [
-                INPUT_FILE_COLUMN_NAME,
-                THREAD_POOL_ID_NAME,
-            ]
-        ).agg(
-            F.count("*").alias("count"),
-            F.min(F.col(self.first_timestamp_column_name)).alias(
-                FIRST_TIMESTAMP_COLUMN_NAME
-            ),
-        )
-
-        _count_per_file.withColumn(
-            "body",
-            F.to_json(
-                F.struct(*_count_per_file.columns), options={"ignoreNullFields": False}
-            ),
-        ).select("body").write.format("eventhubs").options(**self.eh_conf).save()
-        _count_per_file = _count_per_file.count()
-
-        _overall_end_time = _end_time = datetime.utcnow()
-
-        _log_str = f"NumberOfFiles: {_count_per_file}"
-        _log_str += f", TimetoSave : {_save_end_time - _save_start_time}"
-        _log_str += f", TimetoSendEHMsg: {_end_time - _start_time}"
-        _log_str += f", TotalTime: {_overall_end_time - _overall_start_time}"
-        _log_str += f", Files/second: {_count_per_file/(_overall_end_time - _overall_start_time).total_seconds()}"
-        self.logger.info(
-            _log_str,
-            extra=self.logger_extra,
-        )
-        bdf.unpersist()
-
     def process_files(
         self,
         max_files_per_trigger,
@@ -316,9 +316,9 @@ class LoadDataSet(Sparker):
                 "checkpointLocation", self.checkpoint_file_path_data
             )
             .trigger(processingTime=f"{processing_time_in_seconds} seconds")
-            .foreachBatch(self.process_batch)
+            .format("delta")
             .queryName(f"process_data_{self.logger_extra[THREAD_POOL_ID_NAME]}")
-            .start()
+            .start(f"{self.output_file_path}")
         )
         return query
 
@@ -515,17 +515,18 @@ class Main:
             extra=_logger_extra,
         )
 
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=_max_workers,
-        ) as executor:
-            the_futures = [
-                executor.submit(
-                    self.process_input_path,
-                    input_path,
-                )
-                for input_path in _input_paths
-            ]
-            concurrent.futures.wait(the_futures)
+        # with concurrent.futures.ThreadPoolExecutor(
+        #     max_workers=_max_workers,
+        # ) as executor:
+        #     the_futures = [
+        #         executor.submit(
+        #             self.process_input_path,
+        #             input_path,
+        #         )
+        #         for input_path in _input_paths
+        #     ]
+        #     concurrent.futures.wait(the_futures)
+        self.process_input_path(_input_paths[0])
 
 
 if __name__ == "__main__":
