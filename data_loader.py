@@ -273,6 +273,14 @@ class LoadDataSet(Sparker):
             f"First timestamp column name is {first_timestamp_column_name}",
             extra=logger_extra,
         )
+        logger.info(
+            f"Clean up delay for cleanSource archive is {args.cleanup_delay}",
+            extra=logger_extra,
+        )
+        logger.info(
+            f"Number of threads for cleanSource archive is {args.num_threads_for_cleanup}",
+            extra=logger_extra,
+        )
 
     def get_input_data_schema(
         self,
@@ -322,8 +330,8 @@ class LoadDataSet(Sparker):
             )
             .option("cleanSource", "archive")
             .option("sourceArchiveDir", self.archive_file_path)
-            .option("spark.sql.streaming.fileSource.log.cleanupDelay", 10)
-            .option("spark.sql.streaming.fileSource.cleaner.numThreads", 5)
+            .option("spark.sql.streaming.fileSource.log.cleanupDelay", self.args.cleanup_delay)
+            .option("spark.sql.streaming.fileSource.cleaner.numThreads", self.args.num_threads_for_cleanup)
             .trigger(processingTime=f"{processing_time_in_seconds} seconds")
             .format("delta")
             .queryName(f"process_data_{self.logger_extra[THREAD_POOL_ID_NAME]}")
@@ -460,6 +468,22 @@ class Main:
             dest="archive_path",
             help="Archive path",
             required=True,
+        )
+        parser.add_argument(
+            "--cleanup-delay",
+            type=int,
+            dest="cleanup_delay",
+            help="Cleanup delay",
+            default=3600,
+            required=False,
+        )
+        parser.add_argument(
+            "--num-threads-for-cleanup",
+            type=int,
+            dest="num_threads_for_cleanup",
+            help="Number of threads for cleanup",
+            default=5,
+            required=False,
         )
 
         return parser.parse_args(args)
