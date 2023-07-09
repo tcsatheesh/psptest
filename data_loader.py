@@ -112,16 +112,13 @@ class LoadDataSet(Sparker):
     def __init__(
         self,
         logger,
-        key_vault_name,
-        key_vault_linked_service_name,
         args,
-        input_path,
     ):
         super().__init__(
             app_name="LoadDataSet",
             logger=logger,
-            key_vault_name=key_vault_name,
-            key_vault_linked_service_name=key_vault_linked_service_name,
+            key_vault_name=args.keyvault_name,
+            key_vault_linked_service_name=args.keyvault_linked_service_name,
         )
         self.args = args
         storage_account_name = self.get_secret("storage-account-name")
@@ -129,7 +126,8 @@ class LoadDataSet(Sparker):
         eventhub_connection_string = self.get_secret("eventhub-connection-string")
         output_path = args.output_path
         archive_path = args.archive_path
-        checkpoint_path = f"{args.checkpoint_path}/{input_path}"
+        input_path = args.input_path
+        checkpoint_path = f"{args.checkpoint_path}/{args.input_path}"
         partitionby = args.partitionby
 
         self.partitionby = args.partitionby
@@ -384,10 +382,7 @@ class Main:
 
         data_loader = LoadDataSet(
             logger=logger,
-            key_vault_name=args.keyvault_name,
-            key_vault_linked_service_name=args.keyvault_linked_service_name,
             args=args,
-            input_path=input_path,
         )
 
         logger.info(
