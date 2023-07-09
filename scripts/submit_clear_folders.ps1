@@ -46,7 +46,7 @@ $arguments += " --input-path $input_path"
 $arguments += " --output-path $output_path"
 $arguments += " --archive-path $archive_path"
 $arguments += " --checkpoint-path $checkpoint_path"
-
+$arguments += " --clear-checkpoint"
 
 $name = "$blob_name max_trigger:$max_files_per_trigger, processing_time:$processing_time_in_seconds seconds"
 
