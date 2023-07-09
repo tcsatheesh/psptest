@@ -32,7 +32,7 @@ param(
     [string]$keyvault_name,
 
     [Parameter()]
-    [string]$input_paths = "input0",
+    [string]$input_path = "input0",
 
     [Parameter()]
     [string]$first_timestamp_column_name = "processing_time",
@@ -56,7 +56,7 @@ $arguments = "--max-files-per-trigger $max_files_per_trigger"
 $arguments += " --processing-time-in-seconds $processing_time_in_seconds"
 $arguments += " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
-$arguments += " --input-paths $input_paths"
+$arguments += " --input-path $input_path"
 $arguments += " --output-path $output_path"
 $arguments += " --archive-path $archive_path"
 $arguments += " --checkpoint-path $checkpoint_path"
@@ -67,7 +67,7 @@ $arguments += " --csv-header-is-present"
 # $arguments += " --clear-output"
 
 
-$name = "data_loader max_trigger:$max_files_per_trigger, processing_time:$processing_time_in_seconds seconds"
+$name = "$blob_name max_trigger:$max_files_per_trigger, processing_time:$processing_time_in_seconds seconds"
 
 Write-Host "Arguments: $arguments"
 Write-Host "Name of the job: $name"
