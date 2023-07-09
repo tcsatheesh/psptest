@@ -32,10 +32,7 @@ param(
     [string]$keyvault_name,
 
     [Parameter()]
-    [string]$input_path = "input0",
-
-    [Parameter()]
-    [string]$first_timestamp_column_name = "processing_time",
+    [string]$input_path = "input0",    
 
     [Parameter()]
     [string]$partitionby = "loan_purpose",
@@ -61,7 +58,6 @@ $arguments += " --output-path $output_path"
 $arguments += " --archive-path $archive_path"
 $arguments += " --checkpoint-path $checkpoint_path"
 $arguments += " --partitionby $partitionby"
-$arguments += " --first-timestamp-column-name $first_timestamp_column_name"
 $arguments += " --csv-header-is-present"
 
 

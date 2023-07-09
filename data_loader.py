@@ -131,7 +131,6 @@ class LoadDataSet(Sparker):
         archive_path = args.archive_path
         checkpoint_path = f"{args.checkpoint_path}/{input_path}"
         partitionby = args.partitionby
-        first_timestamp_column_name = args.first_timestamp_column_name
 
         self.partitionby = args.partitionby
         container_path = (
@@ -141,7 +140,6 @@ class LoadDataSet(Sparker):
         self.output_file_path = f"{container_path}/{output_path}"
         self.archive_file_path = f"{container_path}/{archive_path}"
         self.checkpoint_file_path_data = f"{container_path}/{checkpoint_path}"
-        self.first_timestamp_column_name = first_timestamp_column_name
         self.input_data_schema = self.get_input_data_schema()
         self.eh_conf = {
             "eventhubs.connectionString": self.spark.sparkContext._jvm.org.apache.spark.eventhubs.EventHubsUtils.encrypt(
@@ -169,9 +167,6 @@ class LoadDataSet(Sparker):
         )
         logger.info(
             f"Partition by is {partitionby}",
-        )
-        logger.info(
-            f"First timestamp column name is {first_timestamp_column_name}",
         )
         logger.info(
             f"Clean up delay for cleanSource archive is {args.cleanup_delay}",
@@ -345,13 +340,6 @@ class Main:
             type=str,
             dest="partitionby",
             help="Partition by this column",
-            required=True,
-        )
-        parser.add_argument(
-            "--first-timestamp-column-name",
-            type=str,
-            dest="first_timestamp_column_name",
-            help="First timestamp column name",
             required=True,
         )
         parser.add_argument(

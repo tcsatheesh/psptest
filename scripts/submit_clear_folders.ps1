@@ -1,12 +1,6 @@
 [CmdletBinding()]
 param(
     [Parameter()]
-    [int]$max_events_per_trigger = 10,
-
-    [Parameter()]
-    [int]$processing_time_in_seconds = 10,
-
-    [Parameter()]
     [string]$workspace_name,
 
     [Parameter()]    
@@ -26,42 +20,39 @@ param(
     [string]$container_name = "jobs",
 
     [Parameter()]
-    [string]$blob_name = "metadata_loader.py",
+    [string]$blob_name = "clear_folders.py",
 
     [Parameter()]
     [string]$keyvault_name,
 
     [Parameter()]
-    [string]$partitionby = "loan_purpose",
+    [string]$input_path = "input0",    
 
     [Parameter()]
-    [string]$output_path = "metadata",
+    [string]$output_path = "output",
 
     [Parameter()]
-    [string]$checkpoint_path = "checkpoint/metadata",
-
+    [string]$checkpoint_path = "checkpoint",
+    
     [Parameter()]
-    [string]$consumer_group = "pyspark"
+    [string]$archive_path = "archive"
 )
 
 
 
-$arguments = "--max-events-per-trigger $max_events_per_trigger"
-$arguments += " --processing-time-in-seconds $processing_time_in_seconds"
-$arguments += " --keyvault-name $keyvault_name"
+$arguments = " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
+$arguments += " --input-path $input_path"
 $arguments += " --output-path $output_path"
+$arguments += " --archive-path $archive_path"
 $arguments += " --checkpoint-path $checkpoint_path"
-$arguments += " --partitionby $partitionby"
-$arguments += " --consumer-group $consumer_group"
-$arguments += " --clear-checkpoint"
 
 
-$name = "metadata_loader max_trigger:$max_per_trigger, processing_time:$processing_time_in_seconds seconds"
+$name = "$blob_name max_trigger:$max_files_per_trigger, processing_time:$processing_time_in_seconds seconds"
 
 Write-Host "Arguments: $arguments"
 Write-Host "Name of the job: $name"
-Write-Host "Spark pool: $spark_pool_name and executor size: $executor_size"
+Write-Host "Spark pool: $spark_pool_name and executor size: $executor_size and number of executors: $number_of_executors"
 
 $main_definition_file = "abfss://$container_name@$storage_account_name.dfs.core.windows.net/$blob_name"
 
