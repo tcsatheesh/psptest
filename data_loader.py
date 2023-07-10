@@ -175,6 +175,12 @@ class LoadDataSet(Sparker):
         logger.info(
             f"Is CSV header present? {args.csv_header_is_present}",
         )
+        logger.info(
+            f"Max files per trigger is {args.max_files_per_trigger}",
+        )
+        logger.info(
+            f"Processing time is {args.processing_time_in_seconds} seconds",
+        )
 
     def get_input_data_schema(
         self,
@@ -198,19 +204,17 @@ class LoadDataSet(Sparker):
         self,
         df,
     ):
-        #TODO: Add transformations here
+        # TODO: Add transformations here
         return df
 
     def process_files(
         self,
-        max_files_per_trigger,  # not used
-        processing_time_in_seconds,
     ):
         options = {
             "header": self.args.csv_header_is_present,
         }
-        if max_files_per_trigger > 0:
-            options["maxFilesPerTrigger"] = max_files_per_trigger
+        if self.args.max_files_per_trigger > 0:
+            options["maxFilesPerTrigger"] = self.args.max_files_per_trigger
 
         df = (
             self.spark.readStream.options(**options)
@@ -225,7 +229,9 @@ class LoadDataSet(Sparker):
             F.current_timestamp().alias(CURRENT_PROCESSING_TIME_COLUMN_NAME),
         )
 
-        transformed_df = self.get_transformations(transformed_df,)
+        transformed_df = self.get_transformations(
+            transformed_df,
+        )
 
         query = (
             transformed_df.writeStream.option(
@@ -241,7 +247,7 @@ class LoadDataSet(Sparker):
                 "spark.sql.streaming.fileSource.cleaner.numThreads",
                 self.args.num_threads_for_cleanup,
             )
-            .trigger(processingTime=f"{processing_time_in_seconds} seconds")
+            .trigger(processingTime=f"{self.args.processing_time_in_seconds} seconds")
             .format("delta")
             .queryName(f"process_data")
             .partitionBy(self.partitionby)
@@ -256,7 +262,7 @@ class Main:
     ):
         args = self.parse_arguments(sys.argv[1:])
 
-        self.args = args                
+        self.args = args
         custom_logger = CustomLogger(
             logger_name=args.logger_name,
             log_level=args.log_level,
@@ -373,9 +379,8 @@ class Main:
 
         return parser.parse_args(args)
 
-    def process_input_path(
+    def run(
         self,
-        input_path,
     ):
         logger = self.logger
         args = self.args
@@ -389,22 +394,9 @@ class Main:
             "Starting Data Ingestion",
         )
 
-        logger.info(
-            f"Max files per trigger is {args.max_files_per_trigger}",
-        )
-        logger.info(
-            f"Processing time is {args.processing_time_in_seconds} seconds",
-        )
-
-        process_data_query = data_loader.process_files(
-            max_files_per_trigger=args.max_files_per_trigger,
-            processing_time_in_seconds=args.processing_time_in_seconds,
-        )
+        process_data_query = data_loader.process_files()
 
         process_data_query.awaitTermination()
-
-    def run(self):
-        self.process_input_path(self.args.input_path)
 
 
 if __name__ == "__main__":
