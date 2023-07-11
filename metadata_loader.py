@@ -6,12 +6,16 @@ from datetime import datetime
 import pyspark.sql.functions as F
 from pyspark.sql.window import Window
 from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType
-
+from pyspark.sql.types import StructType, IntegerType, TimestampType
+from azure.identity import ClientSecretCredential
+from azure.storage.blob import BlobClient
 
 INPUT_FILE_COLUMN_NAME = "source_file"
 CURRENT_PROCESSING_TIME_COLUMN_NAME = "processing_time"
-
+PROCESSED_DATE_COLUMN_NAME = "processed_date"
+FILE_PROPERTIES_SIZE_COLUMN_NAME = "size"
+FILE_PROPERTIES_CREATION_TIME_COLUMN_NAME = "creation_time"
+RECORD_COUNT_COLUMN_NAME = "record_count"
 LOGGING_FORMAT = f"%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 
@@ -90,6 +94,7 @@ class Sparker:
         self.logger.info(
             f"Spark default minPartitions: {self.spark.sparkContext.defaultMinPartitions}",
         )
+
         self.logger.info(
             "Spark initialized",
         )
@@ -108,6 +113,65 @@ class Sparker:
         )
 
 
+class StorageHandler(Sparker):
+    def __init__(
+        self,
+        storage_account_name,
+        container_name,
+        tenant_id,
+        client_id,
+        client_secret,
+    ):
+        self.storage_account_name = storage_account_name
+        self.container_name = container_name
+        self.tenant_id = tenant_id
+        self.client_id = client_id
+        self.client_secret = client_secret
+
+    def get_blob_client(
+        self,
+        file_name,
+    ):
+        storage_account_name = self.storage_account_name
+        container_name = self.container_name
+        credential = ClientSecretCredential(
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
+        _file_url = file_name.replace(
+            "abfss",
+            "https",
+        )
+        _file_url = _file_url.replace(
+            f"{container_name}@{storage_account_name}.dfs.core.windows.net",
+            f"{storage_account_name}.blob.core.windows.net/{container_name}",
+        )
+        print(f"file_url for blob client: {_file_url}")
+        blob_client = BlobClient.from_blob_url(
+            _file_url,
+            credential,
+        )
+        return blob_client
+
+    def get_file_properties(
+        self,
+        file_path,
+    ):
+        try:
+            blob_client = self.get_blob_client(file_path)
+            blob_properties = blob_client.get_blob_properties()
+            return {
+                FILE_PROPERTIES_SIZE_COLUMN_NAME: blob_properties.size,
+                FILE_PROPERTIES_CREATION_TIME_COLUMN_NAME: blob_properties.creation_time,
+            }
+        except:
+            return {
+                FILE_PROPERTIES_SIZE_COLUMN_NAME: None,
+                FILE_PROPERTIES_CREATION_TIME_COLUMN_NAME: None,
+            }
+
+
 class LoadDataSet(Sparker):
     def __init__(
         self,
@@ -115,24 +179,27 @@ class LoadDataSet(Sparker):
         args,
     ):
         super().__init__(
-            app_name="LoadData",
+            app_name="LoadMetaData",
             logger=logger,
             key_vault_name=args.keyvault_name,
             key_vault_linked_service_name=args.keyvault_linked_service_name,
         )
         self.args = args
-        storage_account_name = self.get_secret("storage-account-name")
-        container_name = self.get_secret("container-name")
+        self.storage_account_name = self.get_secret("storage-account-name")
+        self.container_name = self.get_secret("container-name")
+
+        self.tenant_id = self.get_secret("tenant-id")
+        self.client_id = self.get_secret("client-id")
+        self.client_secret = self.get_secret("client-secret")
+
         output_path = args.output_path
         archive_path = args.archive_path
         input_path = args.input_path
-        checkpoint_path = f"{args.checkpoint_path}/{args.input_path}"
+        checkpoint_path = args.checkpoint_path
         partitionby = args.partitionby
 
         self.partitionby = args.partitionby
-        container_path = (
-            f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net"
-        )
+        container_path = f"abfss://{self.container_name}@{self.storage_account_name}.dfs.core.windows.net"
         self.input_file_path = f"{container_path}/{input_path}"
         self.output_file_path = f"{container_path}/{output_path}"
         self.archive_file_path = f"{container_path}/{archive_path}"
@@ -140,10 +207,10 @@ class LoadDataSet(Sparker):
         self.input_data_schema = self.get_input_data_schema()
 
         logger.info(
-            f"Storage account name is {storage_account_name}",
+            f"Storage account name is {self.storage_account_name}",
         )
         logger.info(
-            f"Container name is {container_name}",
+            f"Container name is {self.container_name}",
         )
         logger.info(
             f"Input path is {self.input_file_path}",
@@ -198,8 +265,98 @@ class LoadDataSet(Sparker):
         self,
         df,
     ):
-        # TODO: Add transformations here
-        return df
+        _df = df.withColumn(
+            PROCESSED_DATE_COLUMN_NAME,
+            F.date_format(
+                F.col(CURRENT_PROCESSING_TIME_COLUMN_NAME),
+                "yyyy-MM-dd",
+            ),
+        )
+        return _df
+
+    def process_metadata(
+        self,
+        bdf,
+        epoch_id,
+    ):
+        bdf.persist()
+
+        _SOURCE_FILE_NAME_ALIAS = "source_file_name"
+        _window = Window.partitionBy(INPUT_FILE_COLUMN_NAME).orderBy(
+            F.col(CURRENT_PROCESSING_TIME_COLUMN_NAME).desc()
+        )
+        _bdf = (
+            bdf.select(
+                INPUT_FILE_COLUMN_NAME,
+                CURRENT_PROCESSING_TIME_COLUMN_NAME,
+                self.args.first_column_name,
+            )
+            .withColumn("row", F.row_number().over(_window))
+            .filter(F.col("row") == 1)
+            .drop("row")
+            .select(
+                F.col(INPUT_FILE_COLUMN_NAME).alias(_SOURCE_FILE_NAME_ALIAS),
+                self.args.first_column_name,
+            )
+        )
+
+        _count_per_file = (
+            bdf.groupBy(
+                [
+                    INPUT_FILE_COLUMN_NAME,
+                    CURRENT_PROCESSING_TIME_COLUMN_NAME,
+                    PROCESSED_DATE_COLUMN_NAME,
+                ]
+            )
+            .count()
+            .withColumnRenamed(
+                "count",
+                RECORD_COUNT_COLUMN_NAME,
+            )
+        )
+
+        file_properties_schema = (
+            StructType()
+            .add(FILE_PROPERTIES_SIZE_COLUMN_NAME, IntegerType())
+            .add(FILE_PROPERTIES_CREATION_TIME_COLUMN_NAME, TimestampType())
+        )
+
+        _storage_handler = StorageHandler(
+            storage_account_name=self.storage_account_name,
+            container_name=self.container_name,
+            tenant_id=self.tenant_id,
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+        )
+
+        filesize_udf = F.udf(
+            lambda file_path: _storage_handler.get_file_properties(
+                file_path,
+            ),
+            file_properties_schema,
+        )
+
+        _transformed_df = _count_per_file.withColumn(
+            "fileproperties", filesize_udf(F.col(INPUT_FILE_COLUMN_NAME))
+        )
+        _transformed_df = _transformed_df.select(
+            F.col(INPUT_FILE_COLUMN_NAME),
+            F.col(RECORD_COUNT_COLUMN_NAME),
+            F.col("fileproperties.*"),
+            F.col(CURRENT_PROCESSING_TIME_COLUMN_NAME),
+            F.col(PROCESSED_DATE_COLUMN_NAME),
+        )
+
+        _joined_bdf = _transformed_df.join(
+            _bdf,
+            _bdf[_SOURCE_FILE_NAME_ALIAS] == _count_per_file[INPUT_FILE_COLUMN_NAME],
+            "inner",
+        ).drop(_SOURCE_FILE_NAME_ALIAS)
+
+        _joined_bdf.write.format("delta").partitionBy(self.partitionby).mode(
+            "append"
+        ).save(f"{self.output_file_path}")
+        bdf.unpersist()
 
     def process_files(
         self,
@@ -222,7 +379,6 @@ class LoadDataSet(Sparker):
             F.input_file_name().alias(INPUT_FILE_COLUMN_NAME),
             F.current_timestamp().alias(CURRENT_PROCESSING_TIME_COLUMN_NAME),
         )
-
         transformed_df = self.get_transformations(
             transformed_df,
         )
@@ -242,10 +398,9 @@ class LoadDataSet(Sparker):
                 self.args.num_threads_for_cleanup,
             )
             .trigger(processingTime=f"{self.args.processing_time_in_seconds} seconds")
-            .format("delta")
-            .queryName(f"process_data")
-            .partitionBy(self.partitionby)
-            .start(f"{self.output_file_path}")
+            .queryName(f"process_metadata")
+            .foreachBatch(self.process_metadata)
+            .start()
         )
         return query
 
@@ -370,6 +525,13 @@ class Main:
             help="Is csv header present",
             required=False,
         )
+        parser.add_argument(
+            "--first-column-name",
+            type=str,
+            dest="first_column_name",
+            help="First column name",
+            required=True,
+        )
 
         return parser.parse_args(args)
 
@@ -385,7 +547,7 @@ class Main:
         )
 
         logger.info(
-            "Starting Data Ingestion",
+            "Starting Metadata Ingestion",
         )
 
         process_data_query = data_loader.process_files()

@@ -1,6 +1,12 @@
 [CmdletBinding()]
 param(
     [Parameter()]
+    [int]$max_files_per_trigger = -1,
+
+    [Parameter()]
+    [int]$processing_time_in_seconds = 10,
+
+    [Parameter()]
     [string]$workspace_name,
 
     [Parameter()]    
@@ -20,7 +26,7 @@ param(
     [string]$container_name = "jobs",
 
     [Parameter()]
-    [string]$blob_name = "clear_folders.py",
+    [string]$blob_name = "metadata_loader.py",
 
     [Parameter()]
     [string]$keyvault_name,
@@ -29,24 +35,35 @@ param(
     [string]$input_path = "input0",    
 
     [Parameter()]
-    [string]$output_path = "output",
+    [string]$partitionby = "processed_date",
 
     [Parameter()]
-    [string]$checkpoint_path = "checkpoint",
+    [string]$output_path = "metadata",
+
+    [Parameter()]
+    [string]$checkpoint_path = "checkpoint/metadata",
     
     [Parameter()]
-    [string]$archive_path = "archive"
+    [string]$archive_path = "archive",
+
+    [Parameter()]
+    [string]$first_column_name = "age"
 )
 
 
 
-$arguments = " --keyvault-name $keyvault_name"
+$arguments = "--max-files-per-trigger $max_files_per_trigger"
+$arguments += " --processing-time-in-seconds $processing_time_in_seconds"
+$arguments += " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
 $arguments += " --input-path $input_path"
 $arguments += " --output-path $output_path"
 $arguments += " --archive-path $archive_path"
 $arguments += " --checkpoint-path $checkpoint_path"
-$arguments += " --clear-checkpoint"
+$arguments += " --partitionby $partitionby"
+$arguments += " --first-column-name $first_column_name"
+$arguments += " --csv-header-is-present"
+
 
 $name = "$blob_name"
 

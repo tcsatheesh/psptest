@@ -142,15 +142,14 @@ class ClearFolders(Sparker):  # for debugging and performance testing only
 
     def clear_folders(
         self,
-        input_path,
     ):
         args = self.args
         logger = self.logger
         storage_account_name = self.get_secret("storage-account-name")
         container_name = self.get_secret("container-name")
         output_path = args.output_path
-        input_path = input_path
-        checkpoint_path = f"{args.checkpoint_path}/{input_path}"
+        input_path = args.input_path
+        checkpoint_path = args.checkpoint_path
 
         container_path = (
             f"abfss://{container_name}@{storage_account_name}.dfs.core.windows.net"
@@ -286,7 +285,7 @@ class Main:
                 key_vault_name=args.keyvault_name,
                 key_vault_linked_service_name=args.keyvault_linked_service_name,
             )            
-            _clear_folders.clear_folders(args.input_path)
+            _clear_folders.clear_folders()
 
 
 if __name__ == "__main__":
