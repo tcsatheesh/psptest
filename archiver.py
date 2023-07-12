@@ -194,7 +194,10 @@ class StorageHandler(Sparker):
     ):
         blob_client = self.get_blob_client(remote_file_path)
         with open(file=zip_file_name, mode="rb") as data:
-            blob_client.upload_blob(data=data, overwrite=True)
+            blob_client.upload_blob(
+                data=data,
+                overwrite=True,
+            )
         os.remove(zip_file_name)
 
     def archive_file(
