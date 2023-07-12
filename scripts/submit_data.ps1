@@ -35,7 +35,7 @@ param(
     [string]$input_path = "input0",    
 
     [Parameter()]
-    [string]$partitionby = "loan_purpose",
+    [string]$partitionby = "processed_date",
 
     [Parameter()]
     [string]$output_path = "output",

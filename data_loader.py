@@ -11,7 +11,7 @@ from pyspark.sql.types import StructType
 
 INPUT_FILE_COLUMN_NAME = "source_file"
 CURRENT_PROCESSING_TIME_COLUMN_NAME = "processing_time"
-
+PROCESSED_DATE_COLUMN_NAME = "processed_date"
 LOGGING_FORMAT = f"%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 
@@ -198,8 +198,14 @@ class LoadDataSet(Sparker):
         self,
         df,
     ):
-        # TODO: Add transformations here
-        return df
+        _df = df.withColumn(
+            PROCESSED_DATE_COLUMN_NAME,
+            F.date_format(
+                F.col(CURRENT_PROCESSING_TIME_COLUMN_NAME),
+                "yyyy-MM-dd",
+            ),
+        )
+        return _df
 
     def process_files(
         self,
