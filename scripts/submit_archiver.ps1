@@ -32,13 +32,10 @@ param(
     [string]$metadata_path = "metadata",
    
     [Parameter()]
-    [string]$archive_path = "archive",
+    [string]$archive_queue_path = "archive_queue",
 
     [Parameter()]
-    [string]$archive_date,
-
-    [Parameter()]
-    [string]$timings_path = "timings"
+    [string]$archive_date
 )
 
 
@@ -46,8 +43,7 @@ $arguments = " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
 $arguments += " --data-path $data_path"
 $arguments += " --metadata-path $metadata_path"
-$arguments += " --archive-path $archive_path"
-$arguments += " --timings-path $timings_path"
+$arguments += " --archive-queue-path $archive_queue_path"
 $arguments += " --archive-date $archive_date"
 
 
