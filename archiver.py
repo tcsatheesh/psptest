@@ -222,32 +222,23 @@ class Archiver(Sparker):
         _joined_df = _joined_df.withColumn(
             PROCESSED_DATE_COLUMN_NAME,
             F.lit(_archive_date).cast(DateType()),
-        )        
-
-        _storage_handler = StorageHandler(
-            temp_file_path=self.temp_file_path,
         )
-
-        _move_file_schema = (
-            StructType()
-            .add("file_path", StringType())
-            .add("status", StringType())
-            .add(PROCESSED_DATETIME_COLUMN_NAME, TimestampType())
-            .add("exception", StringType())
-        )
-
-        if self.args.max_files_per_job > 0:
-            _joined_df = _joined_df.limit(
-                self.args.max_files_per_job,
-            )
 
         self.logger.info(
             f"Collecting files list to move",
         )
         _start_datetime = datetime.utcnow()
-        _files_to_move = _joined_df.select(
-            INPUT_FILE_COLUMN_NAME,
-        ).collect()
+        _FILE_PATH = "file_path"
+        _str_to_remove = f"abfss://{self.container_name}@{self.storage_account_name}.dfs.core.windows.net/"
+        _df = _joined_df.withColumn(
+            _FILE_PATH,
+            F.regexp_replace(
+                INPUT_FILE_COLUMN_NAME,
+                _str_to_remove,
+                "",
+            ),
+        )
+        _files_to_move = [row[_FILE_PATH] for row in _df.collect()]
         _end_datetime = datetime.utcnow()
 
         self.logger.info(
@@ -258,31 +249,20 @@ class Archiver(Sparker):
         )
 
         _start_datetime = datetime.utcnow()
-        _move_file_results = []
-        for _file_to_move in _files_to_move:
-            _file_path = _file_to_move[INPUT_FILE_COLUMN_NAME]
-            _move_file_result = _storage_handler.move_file(
-                file_path=_file_path,
-            )
-            _move_file_results.append(_move_file_result)
-        
+        _contents_to_write = "\n".join(_files_to_move)
+        mssparkutils.fs.put(
+            self.temp_file_path,
+            _contents_to_write,
+            True,
+        )
         _end_datetime = datetime.utcnow()
         self.logger.info(
-            f"Completed moving files in {(_end_datetime - _start_datetime).total_seconds()} seconds",
+            f"Completed writing list of files to move in {(_end_datetime - _start_datetime).total_seconds()} seconds",
         )
 
-        _move_file_results_df = self.spark.createDataFrame(
-            _move_file_results,
-            schema=_move_file_schema,
-        )
-
-        _joined_df = _joined_df.join(
-            _move_file_results_df,
-            _joined_df[INPUT_FILE_COLUMN_NAME] == _move_file_results_df["file_path"],
-            "inner",
-        ).drop("file_path")
-
-        _joined_df.write.format("delta").mode("append").save(
+        _joined_df.write.format("delta").partitionBy(PROCESSED_DATE_COLUMN_NAME).mode(
+            "append"
+        ).save(
             self.report_file_path,
         )
 
@@ -299,6 +279,9 @@ class Main:
             log_level=args.log_level,
         )
         self.logger = custom_logger.get_logger()
+        self.log_arguments(
+            args=args,
+        )
 
     def parse_arguments(
         self,
@@ -380,6 +363,38 @@ class Main:
         )
 
         return parser.parse_args(args)
+
+    def log_arguments(
+        self,
+        args,
+    ):
+        _args = args
+        self.logger.info(
+            f"Metadata path is {_args.metadata_path}",
+        )
+        self.logger.info(
+            f"Data path is {_args.data_path}",
+        )
+        self.logger.info(
+            f"Archive date is {_args.archive_date}",
+        )
+        self.logger.info(
+            f"Report path is {_args.report_path}",
+        )
+        self.logger.info(
+            f"Temporary path is {_args.temp_path}",
+        )
+        self.logger.info(
+            f"Maximum number of files per job is {_args.max_files_per_job}",
+        )
+        self.logger.info(
+            f"Key Vault name is {_args.keyvault_name}",
+        )
+        self.logger.info(
+            f"Key Vault linked service name is {_args.keyvault_linked_service_name}",
+        )
+
+        return _args
 
     def run(
         self,

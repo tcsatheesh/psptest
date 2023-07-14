@@ -76,15 +76,15 @@ $BLOB_UPLOAD_STATUS=az storage blob upload `
 
 Write-Host "Blob last modified: $BLOB_UPLOAD_STATUS"
 
-$LIVY_ID=az synapse spark job submit `
---name $name `
---workspace-name $workspace_name `
---spark-pool-name $spark_pool_name `
---main-definition-file $main_definition_file `
---arguments $arguments `
---executors $number_of_executors `
---executor-size $executor_size `
-| jq -r ".id"
+# $LIVY_ID=az synapse spark job submit `
+# --name $name `
+# --workspace-name $workspace_name `
+# --spark-pool-name $spark_pool_name `
+# --main-definition-file $main_definition_file `
+# --arguments $arguments `
+# --executors $number_of_executors `
+# --executor-size $executor_size `
+# | jq -r ".id"
 
 
-Write-Host "Livy ID: $LIVY_ID"
+# Write-Host "Livy ID: $LIVY_ID"
