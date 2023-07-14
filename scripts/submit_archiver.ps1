@@ -30,12 +30,18 @@ param(
 
     [Parameter()]
     [string]$metadata_path = "metadata",
-   
-    [Parameter()]
-    [string]$archive_queue_path = "archive_queue",
 
     [Parameter()]
-    [string]$archive_date
+    [string]$report_path = "report",
+
+    [Parameter()]
+    [string]$temp_path = "temp",
+
+    [Parameter()]
+    [string]$archive_date,
+
+    [Parameter()]
+    [int]$max_files_per_job = -1
 )
 
 
@@ -43,8 +49,10 @@ $arguments = " --keyvault-name $keyvault_name"
 $arguments += " --keyvault-linked-service-name $keyvault_name"
 $arguments += " --data-path $data_path"
 $arguments += " --metadata-path $metadata_path"
-$arguments += " --archive-queue-path $archive_queue_path"
+$arguments += " --report-path $report_path"
+$arguments += " --temp-path $temp_path"
 $arguments += " --archive-date $archive_date"
+$arguments += " --max-files-per-job $max_files_per_job"
 
 
 $name = "$blob_name"

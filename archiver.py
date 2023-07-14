@@ -4,18 +4,17 @@ import argparse
 import logging
 import traceback
 from datetime import datetime
-from zipfile import ZipFile
 
 from pyspark.sql import SparkSession
 import pyspark.sql.functions as F
-from pyspark.sql.types import TimestampType, DateType
+from pyspark.sql.types import TimestampType, DateType, StringType, StructType
 
-from azure.identity import ClientSecretCredential
-from azure.storage.blob import BlobClient
+from notebookutils import mssparkutils
 
 INPUT_FILE_COLUMN_NAME = "source_file"
 PROCESSED_DATE_COLUMN_NAME = "processed_date"
-DATETIME_ARCHIVED_COLUMN_NAME = "archived_on"
+PROCESSED_DATETIME_COLUMN_NAME = "moved_datetime"
+INPUT_FILE_NAME_COLUMN_NAME = "file_name"
 LOGGING_FORMAT = f"%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
 
@@ -113,6 +112,28 @@ class Sparker:
         )
 
 
+class StorageHandler:
+    def __init__(
+        self,
+        temp_file_path,
+    ) -> None:
+        self.temp_file_path = temp_file_path
+
+    def move_file(self, file_path):
+        _result = {
+            "file_path": file_path,
+            "status": "success",
+            PROCESSED_DATETIME_COLUMN_NAME: datetime.utcnow(),
+            "exception": None,
+        }
+        try:
+            mssparkutils.fs.mv(file_path, self.temp_file_path)
+        except Exception as e:
+            _result["status"] = "failed"
+            _result["exception"] = traceback.format_exc()
+        return _result
+
+
 class Archiver(Sparker):
     def __init__(self, args, logger):
         super().__init__(
@@ -153,12 +174,12 @@ class Archiver(Sparker):
 
         data_path = args.data_path
         metadata_path = args.metadata_path
-        archive_queue_path = args.archive_queue_path
 
         container_path = f"abfss://{self.container_name}@{self.storage_account_name}.dfs.core.windows.net"
         self.data_file_path = f"{container_path}/{data_path}"
         self.metadata_file_path = f"{container_path}/{metadata_path}"
-        self.archive_queue_path = f"{container_path}/{archive_queue_path}"
+        self.temp_file_path = f"{container_path}/{args.temp_path}"
+        self.report_file_path = f"{container_path}/{args.report_path}"
 
     def archive_files(
         self,
@@ -199,22 +220,70 @@ class Archiver(Sparker):
         ).drop(_INPUT_FILE_COLUMN_NAME_ALIAS)
 
         _joined_df = _joined_df.withColumn(
-            DATETIME_ARCHIVED_COLUMN_NAME,
-            F.lit(None).cast(TimestampType()),
-        )
-        _joined_df = _joined_df.withColumn(
             PROCESSED_DATE_COLUMN_NAME,
             F.lit(_archive_date).cast(DateType()),
+        )        
+
+        _storage_handler = StorageHandler(
+            temp_file_path=self.temp_file_path,
         )
 
-        _joined_df = _joined_df.select(
+        _move_file_schema = (
+            StructType()
+            .add("file_path", StringType())
+            .add("status", StringType())
+            .add(PROCESSED_DATETIME_COLUMN_NAME, TimestampType())
+            .add("exception", StringType())
+        )
+
+        if self.args.max_files_per_job > 0:
+            _joined_df = _joined_df.limit(
+                self.args.max_files_per_job,
+            )
+
+        self.logger.info(
+            f"Collecting files list to move",
+        )
+        _start_datetime = datetime.utcnow()
+        _files_to_move = _joined_df.select(
             INPUT_FILE_COLUMN_NAME,
-            PROCESSED_DATE_COLUMN_NAME,
-            DATETIME_ARCHIVED_COLUMN_NAME,
+        ).collect()
+        _end_datetime = datetime.utcnow()
+
+        self.logger.info(
+            f"Completed collecting list of files to move in {(_end_datetime - _start_datetime).total_seconds()} seconds",
+        )
+        self.logger.info(
+            f"Number of files to move is {len(_files_to_move)}",
         )
 
-        _joined_df.write.format("delta").mode("overwrite").save(
-            self.archive_queue_path,
+        _start_datetime = datetime.utcnow()
+        _move_file_results = []
+        for _file_to_move in _files_to_move:
+            _file_path = _file_to_move[INPUT_FILE_COLUMN_NAME]
+            _move_file_result = _storage_handler.move_file(
+                file_path=_file_path,
+            )
+            _move_file_results.append(_move_file_result)
+        
+        _end_datetime = datetime.utcnow()
+        self.logger.info(
+            f"Completed moving files in {(_end_datetime - _start_datetime).total_seconds()} seconds",
+        )
+
+        _move_file_results_df = self.spark.createDataFrame(
+            _move_file_results,
+            schema=_move_file_schema,
+        )
+
+        _joined_df = _joined_df.join(
+            _move_file_results_df,
+            _joined_df[INPUT_FILE_COLUMN_NAME] == _move_file_results_df["file_path"],
+            "inner",
+        ).drop("file_path")
+
+        _joined_df.write.format("delta").mode("append").save(
+            self.report_file_path,
         )
 
 
@@ -289,10 +358,24 @@ class Main:
             required=True,
         )
         parser.add_argument(
-            "--archive-queue-path",
+            "--report-path",
             type=str,
-            dest="archive_queue_path",
-            help="Archive queue path",
+            dest="report_path",
+            help="Report path",
+            required=True,
+        )
+        parser.add_argument(
+            "--temp-path",
+            type=str,
+            dest="temp_path",
+            help="Temporary path",
+            required=True,
+        )
+        parser.add_argument(
+            "--max-files-per-job",
+            type=int,
+            dest="max_files_per_job",
+            help="Maximum number of files per job. Use -1 for no limit.",
             required=True,
         )
 
